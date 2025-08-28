@@ -375,7 +375,8 @@ void HiOnia2EEPAT::produce(edm::Event& iEvent, const edm::EventSetup& iSetup) {
 
         if (myVertex.isValid()) {
           GlobalPoint vtxPos(myVertex.position());
-          userVertex["PCAVtx"] = Vertex(reco::Vertex::Point(vtxPos), myVertex.positionError(), vChi2, vNDF, 2);
+          userVertex["PCAVtx"] = Vertex(reco::Vertex::Point(vtxPos.x(), vtxPos.y(), vtxPos.z()), 
+                                       myVertex.positionError(), vChi2, vNDF, 2);
         }
       }
 
