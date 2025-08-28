@@ -358,11 +358,12 @@ void HiOnia2EEPAT::produce(edm::Event& iEvent, const edm::EventSetup& iSetup) {
       }
 
       // ---- fit vertex using Kalman vertex fitter ----
-      TransientTrack electron1TT((*theTTBuilder).build(it.gsfTrack()));
-      TransientTrack electron2TT((*theTTBuilder).build(it2.gsfTrack()));
-      t_tks.clear();
-      t_tks.push_back(electron1TT);
-      t_tks.push_back(electron2TT);
+      {
+        TransientTrack electron1TT((*theTTBuilder).build(it.gsfTrack()));
+        TransientTrack electron2TT((*theTTBuilder).build(it2.gsfTrack()));
+        t_tks.clear();
+        t_tks.push_back(electron1TT);
+        t_tks.push_back(electron2TT);
 
       if (addCommonVertex_) {
         myVertex = vtxFitter.vertex(t_tks);
@@ -375,11 +376,22 @@ void HiOnia2EEPAT::produce(edm::Event& iEvent, const edm::EventSetup& iSetup) {
 
         if (myVertex.isValid()) {
           GlobalPoint vtxPos(myVertex.position());
+          GlobalError vtxError = myVertex.positionError();
+          
+          // Convert GlobalError to reco::Vertex::Error (3x3 SMatrix)
+          reco::Vertex::Error vtxCov;
+          vtxCov(0,0) = vtxError.cxx();
+          vtxCov(0,1) = vtxError.cyx(); vtxCov(1,0) = vtxCov(0,1);
+          vtxCov(0,2) = vtxError.czx(); vtxCov(2,0) = vtxCov(0,2);
+          vtxCov(1,1) = vtxError.cyy();
+          vtxCov(1,2) = vtxError.czy(); vtxCov(2,1) = vtxCov(1,2);
+          vtxCov(2,2) = vtxError.czz();
+          
           userVertex["PCAVtx"] = Vertex(reco::Vertex::Point(vtxPos.x(), vtxPos.y(), vtxPos.z()), 
-                                       myVertex.positionError(), vChi2, vNDF, 2);
+                                       vtxCov, vChi2, vNDF, 2);
         }
       }
-      // Simple test
+      } // End vertex fitting block
 
       // store variables in the user area of the candidate
       for (auto const &key : userFloat) myCand.addUserFloat(key.first, key.second);
