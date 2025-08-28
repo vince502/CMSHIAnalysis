@@ -379,6 +379,7 @@ void HiOnia2EEPAT::produce(edm::Event& iEvent, const edm::EventSetup& iSetup) {
                                        myVertex.positionError(), vChi2, vNDF, 2);
         }
       }
+      // Simple test
 
       // store variables in the user area of the candidate
       for (auto const &key : userFloat) myCand.addUserFloat(key.first, key.second);
