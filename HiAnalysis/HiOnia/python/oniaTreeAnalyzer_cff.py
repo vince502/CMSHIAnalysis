@@ -2,7 +2,22 @@ import FWCore.ParameterSet.Config as cms
 
 from PhysicsTools.PatAlgos.tools.helpers import *
 
-def oniaTreeAnalyzer(process, muonTriggerList=[[],[],[],[]], HLTProName='HLT', muonSelection="Trk", L1Stage=2, isMC=True, pdgID=443, outputFileName="OniaTree.root", muonlessPV = False, doTrimu=False, doDimuTrk=False, flipJpsiDir=0, OnlySingleMuons=False, getObjectsBy="array"):
+def oniaTreeAnalyzer(process,
+                     muonTriggerList=[[], [], [], []],
+                     HLTProName='HLT',
+                     muonSelection="Trk",
+                     L1Stage=2,
+                     isMC=True,
+                     pdgID=443,
+                     outputFileName="OniaTree.root",
+                     muonlessPV=False,
+                     doTrimu=False,
+                     doDimuTrk=False,
+                     flipJpsiDir=0,
+                     OnlySingleMuons=False,
+                     getObjectsBy="array",
+                     doElectrons=False,
+                     electronTriggerList=None):
 
     process.load("FWCore.MessageService.MessageLogger_cfi")
     process.MessageLogger.cerr.FwkReport.reportEvery = 1000
@@ -75,3 +90,50 @@ def oniaTreeAnalyzer(process, muonTriggerList=[[],[],[],[]], HLTProName='HLT', m
     )
 
     process.oniaTreeAna = cms.Sequence(process.patMuonSequence * process.onia2MuMuPatGlbGlb * process.hionia)
+
+    if doElectrons:
+        if electronTriggerList is None:
+            electronTriggerList = {
+                'SingleElectronTrigger': [],
+                'DoubleElectronTrigger': []
+            }
+
+        if not hasattr(process, 'onia2ElectronElectronPatGlbGlb'):
+            process.load('HiSkim.HiOnia2EE.onia2EEPAT_cff')
+
+        from HiSkim.HiOnia2EE.onia2EEPAT_cff import setupOnia2EEForMiniAOD
+        setupOnia2EEForMiniAOD(process, 'onia2ElectronElectronPatGlbGlb')
+
+        process.onia2ElectronElectronPatGlbGlb.dielectronSelection = cms.string("mass > 0")
+        process.onia2ElectronElectronPatGlbGlb.resolvePileUpAmbiguity = cms.bool(True)
+
+        electronPathsList = []
+        for key in ['DoubleElectronTrigger', 'SingleElectronTrigger']:
+            if key in electronTriggerList and electronTriggerList[key]:
+                electronPathsList.extend(list(electronTriggerList[key]))
+        electronPaths = cms.vstring(*electronPathsList)
+
+        from HiAnalysis.HiOnia.hioniaElectronAnalyzer_cfi import hioniaElectrons
+        process.hioniaElectrons = hioniaElectrons.clone(
+            triggerPathNames=electronPaths,
+            triggerResults=cms.InputTag('TriggerResults', '', HLTProName),
+            storeGenInfo=cms.bool(isMC),
+            isHI=cms.untracked.bool(process.hionia.isHI.value()),
+            isMC=cms.untracked.bool(isMC),
+            useEvtPlane=cms.untracked.bool(process.hionia.useEvtPlane.value()),
+            CentralitySrc=process.hionia.CentralitySrc,
+            CentralityBinSrc=process.hionia.CentralityBinSrc,
+            EvtPlane=process.hionia.EvtPlane,
+            srcElectron=process.onia2ElectronElectronPatGlbGlb.electrons,
+            srcDielectron=cms.InputTag('onia2ElectronElectronPatGlbGlb'),
+            primaryVertexTag=process.onia2ElectronElectronPatGlbGlb.primaryVertexTag,
+            beamSpotTag=process.onia2ElectronElectronPatGlbGlb.beamSpotTag,
+            conversions=process.onia2ElectronElectronPatGlbGlb.conversions,
+            genParticles=cms.InputTag('prunedGenParticles') if isMC else cms.InputTag('')
+        )
+
+        electronSequence = cms.Sequence(process.onia2ElectronElectronPatGlbGlb * process.hioniaElectrons)
+        if hasattr(process, 'unpackedTracksAndVertices'):
+            electronSequence = cms.Sequence(process.unpackedTracksAndVertices * electronSequence)
+
+        process.oniaTreeAna += electronSequence

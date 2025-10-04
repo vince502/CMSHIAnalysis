@@ -29,6 +29,15 @@
 #include "TrackingTools/IPTools/interface/IPTools.h"
 #include "TrackingTools/PatternTools/interface/ClosestApproachInRPhi.h"
 
+#include "FWCore/Common/interface/TriggerNames.h"
+#include "FWCore/Utilities/interface/Exception.h"
+
+#include "DataFormats/Math/interface/deltaR.h"
+
+#include <cctype>
+#include <algorithm>
+#include <cstdint>
+
 HiOnia2EEPAT::HiOnia2EEPAT(const edm::ParameterSet &iConfig)
     : electronsToken_(consumes<edm::View<pat::Electron> >(iConfig.getParameter<edm::InputTag>("electrons"))),
       thebeamspotToken_(consumes<reco::BeamSpot>(iConfig.getParameter<edm::InputTag>("beamSpotTag"))),
@@ -64,7 +73,43 @@ HiOnia2EEPAT::HiOnia2EEPAT(const edm::ParameterSet &iConfig)
       flipJpsiDirection_(iConfig.getParameter<int>("flipJpsiDirection")),
       Converter_(converter::TrackToCandidate(iConfig, consumesCollector())),
       trackType_(iConfig.getParameter<int>("particleType")),
-      trackMass_(iConfig.getParameter<double>("trackMass")) {
+      trackMass_(iConfig.getParameter<double>("trackMass")),
+      doTriggerMatch_(false),
+      triggerMatchDR_(0.3),
+      triggerPaths_(),
+      triggerLabels_(),
+      triggerResultsToken_(),
+      triggerObjectsToken_(),
+      requireLastFilter_(true),
+      requireL3Filter_(false) {
+  if (iConfig.existsAs<bool>("doTriggerMatching")) {
+    doTriggerMatch_ = iConfig.getParameter<bool>("doTriggerMatching");
+  }
+
+  if (doTriggerMatch_) {
+    if (!iConfig.existsAs<edm::InputTag>("triggerResults") || !iConfig.existsAs<edm::InputTag>("triggerObjects") ||
+        !iConfig.existsAs<std::vector<std::string> >("triggerPaths")) {
+      throw cms::Exception("Configuration")
+          << "doTriggerMatching is True but triggerResults, triggerObjects, or triggerPaths parameters are missing.";
+    }
+
+    triggerMatchDR_ = iConfig.existsAs<double>("triggerMatchDR") ? iConfig.getParameter<double>("triggerMatchDR") : 0.3;
+    requireLastFilter_ =
+        iConfig.existsAs<bool>("requireLastFilter") ? iConfig.getParameter<bool>("requireLastFilter") : true;
+    requireL3Filter_ =
+        iConfig.existsAs<bool>("requireL3Filter") ? iConfig.getParameter<bool>("requireL3Filter") : false;
+
+    triggerPaths_ = iConfig.getParameter<std::vector<std::string> >("triggerPaths");
+    triggerLabels_.reserve(triggerPaths_.size());
+    for (const auto& path : triggerPaths_) {
+      triggerLabels_.push_back("trig_" + sanitizeLabel(path));
+    }
+
+    triggerResultsToken_ = consumes<edm::TriggerResults>(iConfig.getParameter<edm::InputTag>("triggerResults"));
+    triggerObjectsToken_ = consumes<std::vector<pat::TriggerObjectStandAlone> >(
+        iConfig.getParameter<edm::InputTag>("triggerObjects"));
+  }
+
   produces<pat::CompositeCandidateCollection>("");
   produces<pat::CompositeCandidateCollection>("trielectron");
   produces<pat::CompositeCandidateCollection>("dieletrk");
@@ -223,6 +268,65 @@ void HiOnia2EEPAT::produce(edm::Event& iEvent, const edm::EventSetup& iSetup) {
   Handle<reco::ConversionCollection> conversions;
   iEvent.getByToken(conversionsToken_, conversions);
 
+  std::vector<std::string> resolvedTriggerPaths;
+  std::vector<bool> triggerAccepted;
+  std::vector<pat::TriggerObjectStandAlone> matchedTriggerObjects;
+  const edm::TriggerResults* triggerResultsPtr = nullptr;
+
+  auto resolveTriggerPath = [](const std::string& requested, const edm::TriggerNames& names) -> std::string {
+    const auto& allNames = names.triggerNames();
+    // Exact match first
+    for (const auto& name : allNames) {
+      if (name == requested)
+        return name;
+    }
+    const std::string suffix("_v");
+    auto pos = requested.find(suffix);
+    if (pos != std::string::npos) {
+      std::string prefix = requested.substr(0, pos);
+      for (const auto& name : allNames) {
+        if (name.compare(0, prefix.size(), prefix) == 0 && name.find(suffix) == prefix.size())
+          return name;
+      }
+    }
+    return std::string();
+  };
+
+  if (doTriggerMatch_) {
+    edm::Handle<edm::TriggerResults> triggerResultsHandle;
+    edm::Handle<std::vector<pat::TriggerObjectStandAlone> > triggerObjectsHandle;
+    iEvent.getByToken(triggerResultsToken_, triggerResultsHandle);
+    iEvent.getByToken(triggerObjectsToken_, triggerObjectsHandle);
+
+    if (triggerResultsHandle.isValid() && triggerObjectsHandle.isValid()) {
+      triggerResultsPtr = triggerResultsHandle.product();
+      const edm::TriggerNames& triggerNames = iEvent.triggerNames(*triggerResultsPtr);
+
+      resolvedTriggerPaths.reserve(triggerPaths_.size());
+      triggerAccepted.resize(triggerPaths_.size(), false);
+
+      for (size_t ipath = 0; ipath < triggerPaths_.size(); ++ipath) {
+        std::string resolved = resolveTriggerPath(triggerPaths_[ipath], triggerNames);
+        resolvedTriggerPaths.emplace_back(resolved);
+        if (!resolved.empty()) {
+          unsigned int index = triggerNames.triggerIndex(resolved);
+          if (index < triggerResultsPtr->size()) {
+            triggerAccepted[ipath] = triggerResultsPtr->accept(index);
+          }
+        }
+      }
+
+      matchedTriggerObjects.reserve(triggerObjectsHandle->size());
+      for (const auto& obj : *triggerObjectsHandle) {
+        matchedTriggerObjects.push_back(obj);
+        matchedTriggerObjects.back().unpackPathNames(triggerNames);
+      }
+    } else {
+      resolvedTriggerPaths.assign(triggerPaths_.size(), std::string());
+      triggerAccepted.assign(triggerPaths_.size(), false);
+    }
+  }
+
   const auto &theTTBuilder = iSetup.getHandle(trackBuilderToken_);
   KalmanVertexFitter vtxFitter(true);
 
@@ -347,6 +451,61 @@ void HiOnia2EEPAT::produce(edm::Event& iEvent, const edm::EventSetup& iSetup) {
       userFloat["ele2PFNeuIso"] = pfIso2.sumNeutralHadronEt;
       userFloat["ele1PFPhoIso"] = pfIso1.sumPhotonEt;
       userFloat["ele2PFPhoIso"] = pfIso2.sumPhotonEt;
+
+      const bool haveTriggerInfo = doTriggerMatch_ && triggerResultsPtr != nullptr && !resolvedTriggerPaths.empty();
+      uint64_t candTrigBits = 0ULL;
+      uint64_t ele1TrigBits = 0ULL;
+      uint64_t ele2TrigBits = 0ULL;
+
+      if (haveTriggerInfo) {
+        for (size_t ipath = 0; ipath < triggerPaths_.size(); ++ipath) {
+          int candMatch = 0;
+          int ele1Match = 0;
+          int ele2Match = 0;
+
+          if (!resolvedTriggerPaths[ipath].empty() && triggerAccepted[ipath]) {
+            for (const auto& trigObj : matchedTriggerObjects) {
+              if (!trigObj.hasPathName(resolvedTriggerPaths[ipath], requireLastFilter_, requireL3Filter_))
+                continue;
+              if (!ele1Match && reco::deltaR(it.eta(), it.phi(), trigObj.eta(), trigObj.phi()) < triggerMatchDR_) {
+                ele1Match = 1;
+              }
+              if (!ele2Match && reco::deltaR(it2.eta(), it2.phi(), trigObj.eta(), trigObj.phi()) < triggerMatchDR_) {
+                ele2Match = 1;
+              }
+              if (ele1Match || ele2Match) {
+                candMatch = 1;
+              }
+              if (ele1Match && ele2Match)
+                break;
+            }
+          }
+
+          userInt[triggerLabels_[ipath]] = candMatch;
+          userInt["ele1_" + triggerLabels_[ipath]] = ele1Match;
+          userInt["ele2_" + triggerLabels_[ipath]] = ele2Match;
+
+          if (ipath < 64) {
+            const uint64_t bit = (1ULL << ipath);
+            if (candMatch)
+              candTrigBits |= bit;
+            if (ele1Match)
+              ele1TrigBits |= bit;
+            if (ele2Match)
+              ele2TrigBits |= bit;
+          }
+        }
+      } else if (doTriggerMatch_) {
+        for (size_t ipath = 0; ipath < triggerPaths_.size(); ++ipath) {
+          userInt[triggerLabels_[ipath]] = 0;
+          userInt["ele1_" + triggerLabels_[ipath]] = 0;
+          userInt["ele2_" + triggerLabels_[ipath]] = 0;
+        }
+      }
+
+      myCand.addUserData<uint64_t>("trigBits", candTrigBits);
+      myCand.addUserData<uint64_t>("ele1TrigBits", ele1TrigBits);
+      myCand.addUserData<uint64_t>("ele2TrigBits", ele2TrigBits);
 
       // ---- apply the dielectron cut ----
       if (!(dielectronSelection_(myCand) || (resolveAmbiguity_ && doTriElectrons_))) {
@@ -478,6 +637,16 @@ std::pair<int, std::pair<float, float> > HiOnia2EEPAT::findJpsiMCInfo(reco::GenP
   result.second = trueLifePair;
 
   return result;
+}
+
+std::string HiOnia2EEPAT::sanitizeLabel(const std::string& raw) const {
+  std::string safe(raw);
+  std::transform(safe.begin(), safe.end(), safe.begin(), [](unsigned char c) {
+    if (std::isalnum(c) || c == '_')
+      return static_cast<char>(c);
+    return '_';
+  });
+  return safe;
 }
 
 //define this as a plug-in

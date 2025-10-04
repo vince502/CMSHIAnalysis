@@ -1,3 +1,4 @@
 #include <DataFormats/PatCandidates/interface/UserData.h>
 
-pat::UserHolder<int> dummy;
+pat::UserHolder<int> dummyInt;
+pat::UserHolder<unsigned long> dummyULong;

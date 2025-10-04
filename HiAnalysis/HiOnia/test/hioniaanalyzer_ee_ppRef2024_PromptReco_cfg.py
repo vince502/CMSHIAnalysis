@@ -12,6 +12,10 @@ process.load('Configuration.StandardSequences.GeometryRecoDB_cff')
 process.load('Configuration.StandardSequences.MagneticField_cff')
 process.load('Configuration.StandardSequences.FrontierConditions_GlobalTag_cff')
 
+process.load('FWCore.MessageService.MessageLogger_cfi')
+process.MessageLogger.cerr.FwkReport.reportEvery = 1
+process.options = cms.untracked.PSet(wantSummary = cms.untracked.bool(True))
+
 # Global tag
 from Configuration.AlCa.GlobalTag import GlobalTag
 process.GlobalTag = GlobalTag(process.GlobalTag, '141X_dataRun3_Prompt_v3', '')
@@ -26,7 +30,7 @@ process.source = cms.Source("PoolSource",
 )
 
 process.maxEvents = cms.untracked.PSet(
-    input = cms.untracked.int32(1000)
+    input = cms.untracked.int32(40000)
 )
 
 # Load the onia2EE producer
@@ -34,18 +38,18 @@ from HiSkim.HiOnia2EE.onia2EEPAT_cff import setupOnia2EEForMiniAOD
 
 process.load('HiSkim.HiOnia2EE.onia2EEPAT_cff')
 
+from HiSkim.HiOnia2EE.onia2EEPAT_cff import electron_trigger_paths
+
 # Configure for J/psi -> ee selection
 process.onia2ElectronElectronPatGlbGlb.dielectronSelection = cms.string(
-    "mass > 2.8 && mass < 3.4 && charge == 0"
+    "mass > 2.5 && mass < 16 && charge == 0"
+    # "mass > 0.0 && mass < 10000"
 )
 process.onia2ElectronElectronPatGlbGlb.electrons = cms.InputTag("slimmedElectrons")
 process.onia2ElectronElectronPatGlbGlb.primaryVertexTag = cms.InputTag("offlineSlimmedPrimaryVertices")
 process.onia2ElectronElectronPatGlbGlb.conversions = cms.InputTag("reducedEgamma", "reducedConversions")
-process.onia2ElectronElectronPatGlbGlb.doTriggerMatching = True
-process.onia2ElectronElectronPatGlbGlb.triggerPaths = cms.vstring(
-    'HLT_HIEle20Gsf_v',
-    'HLT_HIDoubleEle10Gsf_v'
-)
+process.onia2ElectronElectronPatGlbGlb.doTriggerMatching = False
+process.onia2ElectronElectronPatGlbGlb.triggerPaths = cms.vstring(*electron_trigger_paths)
 process.onia2ElectronElectronPatGlbGlb.triggerMatchDR = 0.2
 
 from HeavyIonsAnalysis.EGMAnalysis.ggHiNtuplizer_cfi import ggHiNtuplizer
@@ -73,6 +77,13 @@ process.onia2ElectronElectronFilter = cms.EDFilter("CandViewCountFilter",
     src = cms.InputTag("onia2ElectronElectronPatGlbGlb"),
     minNumber = cms.uint32(1)
 )
+
+
+from HiAnalysis.HiOnia.hioniaElectronAnalyzer_cfi import hioniaElectrons
+
+process.hionia = hioniaElectrons.clone()
+process.hionia.isHI = False
+process.hionia.triggerPathNames = cms.vstring(*electron_trigger_paths)
 
 # Output definition
 process.AODSIMoutput = cms.OutputModule("PoolOutputModule",
@@ -103,8 +114,9 @@ process.AODSIMoutput = cms.OutputModule("PoolOutputModule",
 process.skim_path = cms.Path(
     process.onia2ElectronElectronPatGlbGlb *
     process.onia2ElectronElectronFilter *
-    process.ggHiNtuplizer *
-    process.hiTriggerObjects
+    process.hionia
+    # process.ggHiNtuplizer *
+    # process.hiTriggerObjects
 )
 
 setupOnia2EEForMiniAOD(process)
@@ -112,7 +124,11 @@ setupOnia2EEForMiniAOD(process)
 process.AODSIMoutput_step = cms.EndPath(process.AODSIMoutput)
 
 # Schedule definition
-process.schedule = cms.Schedule(process.skim_path, process.AODSIMoutput_step)
+process.schedule = cms.Schedule(process.skim_path)
 
 # Message logger
-process.MessageLogger.cerr.FwkReport.reportEvery = 1000
+process.MessageLogger.cerr.FwkReport.reportEvery = 10000
+
+
+process.onia2ElectronElectronPatGlbGlb.higherPuritySelection = cms.string("pt > 3.0 && abs(eta) < 2.4")
+process.onia2ElectronElectronPatGlbGlb.lowerPuritySelection = cms.string("pt > 2.0 && abs(eta) < 2.4")

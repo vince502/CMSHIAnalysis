@@ -26,6 +26,9 @@
 #include "DataFormats/BeamSpot/interface/BeamSpot.h"
 #include "DataFormats/EgammaCandidates/interface/GsfElectron.h"
 #include "DataFormats/EgammaCandidates/interface/Conversion.h"
+#include "DataFormats/Common/interface/TriggerResults.h"
+#include "DataFormats/PatCandidates/interface/TriggerObjectStandAlone.h"
+#include "FWCore/Common/interface/TriggerNames.h"
 #include "CommonTools/Egamma/interface/ConversionTools.h"
 #include "CommonTools/Egamma/interface/EffectiveAreas.h"
 #include "DataFormats/EgammaReco/interface/SuperCluster.h"
@@ -61,6 +64,7 @@ private:
   bool isAMixedbHadron(int pdgID, int momPdgID);
   reco::GenParticleRef findMotherRef(reco::GenParticleRef GenParticle, int GenParticlePDG);
   std::pair<int, std::pair<float, float> > findJpsiMCInfo(reco::GenParticleRef genJpsi);
+  std::string sanitizeLabel(const std::string& raw) const;
 
   // ----------member data ---------------------------
 private:
@@ -92,6 +96,15 @@ private:
   double trackMass_;
   GreaterByPt<pat::CompositeCandidate> pTComparator_;
   GreaterByVProb<pat::CompositeCandidate> vPComparator_;
+
+  bool doTriggerMatch_;
+  double triggerMatchDR_;
+  std::vector<std::string> triggerPaths_;
+  std::vector<std::string> triggerLabels_;
+  edm::EDGetTokenT<edm::TriggerResults> triggerResultsToken_;
+  edm::EDGetTokenT<std::vector<pat::TriggerObjectStandAlone> > triggerObjectsToken_;
+  bool requireLastFilter_;
+  bool requireL3Filter_;
 
   InvariantMassFromVertex massCalculator;
   math::XYZPoint RefVtx;

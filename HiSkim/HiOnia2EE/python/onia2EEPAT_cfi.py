@@ -35,7 +35,16 @@ onia2ElectronElectronPAT = cms.EDProducer('HiOnia2EEPAT',
     onlyGoodElectrons = cms.bool(False),
     onlySingleElectrons = cms.bool(False),
     flipJpsiDirection = cms.int32(0),
-    
+
+    # trigger matching (optional)
+    doTriggerMatching = cms.bool(False),
+    triggerResults = cms.InputTag("TriggerResults","","HLT"),
+    triggerObjects = cms.InputTag("slimmedPatTrigger"),
+    triggerPaths = cms.vstring(),
+    triggerMatchDR = cms.double(0.3),
+    requireLastFilter = cms.bool(True),
+    requireL3Filter = cms.bool(False),
+
     # track-related parameters for dielectron+track (if enabled)
     particleType = cms.int32(211),  # pion
     trackMass = cms.double(0.13957018)  # pion mass
